@@ -159,6 +159,7 @@ bool Tracking::TrackCoarse(FramePtr frame)
         TEST_MAP_SYNC;
 
         frame->clearMatches();
+        // 半径：单目15，双目10
         auto radius = settings.inputType == InputType::Mono ? coarse_projection_search_radius_mono
                                                             : coarse_projection_search_radius_stereo;
         tracking_result = TrackWithPrediction(*frame, radius);
@@ -189,7 +190,12 @@ bool Tracking::TrackCoarse(FramePtr frame)
     return tracking_result;
 }
 
-
+/**
+ *
+ * @param frame 当前帧
+ * @param radius 半径
+ * @return
+ */
 bool Tracking::TrackWithPrediction(Frame& frame, float radius)
 {
     //    std::cout << "track " << frame << std::endl;

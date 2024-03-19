@@ -18,19 +18,16 @@ namespace Snake
 {
 Input::Input() : Module(ModuleType::INPUT)
 {
-    if (settings.inputType == InputType::Mono)
-    {
+    if (settings.inputType == InputType::Mono) {
         settings.datasetParameters.force_monocular = true;
     }
-    else
-    {
+    else {
         settings.datasetParameters.force_monocular = false;
     }
 
     CreateCamera();
 
-    switch (settings.inputType)
-    {
+    switch (settings.inputType) {
         case InputType::Mono:
             SAIGA_ASSERT(mono_intrinsics.model.K.fx != 1);
             stereo_cam = mono_intrinsics.dummyStereoCamera();
@@ -54,33 +51,37 @@ Input::Input() : Module(ModuleType::INPUT)
     if (camera_stereo) globalCamera = camera_stereo.get();
     if (camera_rgbd) globalCamera = camera_rgbd.get();
 
-
-    if (settings.inputType == InputType::Stereo)
-    {
+    // 双目
+    if (settings.inputType == InputType::Stereo) {
         // We need rectification if distortion is not 0
+        // 若畸变系数的平方范数 != 0，需要极线矫正
         bool need_rectify = stereo_intrinsics.model.dis.Coeffs().squaredNorm() != 0;
 
-        if (need_rectify)
-        {
+        if (need_rectify) {
+            std::cout << "需进行极线矫正" << std::endl;
+
+            // 极线校正
             Rectify();
+            // 更新相机采参数 和 双目相机对象
             stereo_intrinsics.bf      = rect_right.bf;
             stereo_cam.bf             = rect_right.bf;
             mono_intrinsics.model.K   = rect_left.K_dst;
             mono_intrinsics.model.dis = Distortion();
             stereo_cam                = StereoCamera4(rect_left.K_dst, stereo_intrinsics.bf);
         }
-        else
-        {
+        else {
+            // 左右目相机的投影矩阵设为单位阵
             rect_left.Identity(stereo_intrinsics.model.K, stereo_intrinsics.bf);
             rect_right.Identity(stereo_intrinsics.rightModel.K, stereo_intrinsics.bf);
+            // 重新构造双目相机对象
             stereo_cam = stereo_intrinsics.stereoCamera();
         }
 
         SAIGA_ASSERT(stereo_intrinsics.bf != 0);
         SAIGA_ASSERT(stereo_cam.bf != 0);
     }
-    else
-    {
+    // 单目
+    else {
         rect_left.K_dst = K;
         rect_left.K_src = K;
         rect_left.D_src = mono_intrinsics.model.dis;
@@ -88,8 +89,7 @@ Input::Input() : Module(ModuleType::INPUT)
 
     std::cout << mono_intrinsics << std::endl;
 
-
-
+    // 根据单目相机的图像尺寸和畸变参数，计算特征点网格的边界
     featureGridBounds.computeFromIntrinsicsDist(mono_intrinsics.imageSize.w, mono_intrinsics.imageSize.h,
                                                 rect_left.K_dst, rect_left.D_src);
 
@@ -252,17 +252,15 @@ void Input::run()
         if (dataset_stereo) dataset_stereo->ResetTime();
 
 
-        while (running)
-        {
+        while (running) {
+
             std::shared_ptr<Frame> frame;
             {
                 auto timer = ModuleTimer();
                 frame      = ReadNextFrame();
             }
 
-
-            if (!frame || stop_camera)
-            {
+            if (!frame || stop_camera) {
                 std::cout << "Camera Disconnected." << std::endl;
                 running = false;
                 break;
@@ -277,15 +275,12 @@ void Input::run()
             }
 #endif
 
-            if (store_previous_frame)
-            {
+            if (store_previous_frame) {
                 frame->previousFrame = last_frame;
             }
             last_frame = frame;
 
-
-            if (first_image)
-            {
+            if (first_image) {
                 start_timestamp = frame->timeStamp;
                 first_image     = false;
             }
@@ -294,8 +289,7 @@ void Input::run()
 
             camera_slot.set(frame);
 
-            while (pause && running)
-            {
+            while (pause && running) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }
@@ -305,20 +299,20 @@ void Input::run()
     process_image_thread = ScopedThread([this]() {
         Saiga::Random::setSeed(settings.randomSeed);
         Saiga::setThreadName("Grayscale");
-        while (true)
-        {
+        while (true) {
             auto frame = camera_slot.get();
 
-            if (!frame)
-            {
+            if (!frame) {
                 break;
             }
 
             float gray_time;
+
             {
                 Saiga::ScopedTimer timer(gray_time);
                 computeGrayscaleImage(*frame);
             }
+
             output_buffer.add(frame);
         }
         output_buffer.add(nullptr);
@@ -391,25 +385,31 @@ FramePtr Input::ReadNextFrame()
     return frame;
 }
 
+/**
+ *
+ * @param frame
+ */
 void Input::computeGrayscaleImage(Frame& frame)
 {
-    if (frame.image_rgb.rows == 0 || frame.image.rows > 0)
-    {
+    // 帧的没有彩色图像 或 灰度图像已存在，则不进行处理，直接返回
+    if (frame.image_rgb.rows == 0 || frame.image.rows > 0) {
         SAIGA_ASSERT(frame.image.valid());
         return;
     }
 
+    // 创建灰度图像
     frame.image.create(frame.image_rgb.rows, frame.image_rgb.cols);
 #if 1
+    // 使用OpenCV库进行灰度转换
     cv::setNumThreads(0);
     cv::Mat4b cv_src = Saiga::ImageViewToMat(frame.image_rgb.getImageView());
     cv::Mat1b cv_dst = Saiga::ImageViewToMat(frame.image.getImageView());
     cv::cvtColor(cv_src, cv_dst, cv::COLOR_RGBA2GRAY);
+    std::string filename = "/home/liuzhi/Project/Optimization_Results/snake_img/" + std::to_string(frame.id) + ".png";
+    cv::imwrite(filename, cv_dst);
 #else
     ImageTransformation::RGBAToGray8(frame.image_rgb, frame.image);
 #endif
 }
-
-
 
 }  // namespace Snake

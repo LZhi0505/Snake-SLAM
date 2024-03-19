@@ -27,6 +27,7 @@ void Frame::allocateTmp()
     undistorted_keypoints.reserve(N);
     normalized_points.resize(N);
 }
+
 std::ostream& operator<<(std::ostream& strm, const Frame& frame)
 {
     strm << "[Frame] " << frame.id;

@@ -16,19 +16,22 @@ Preprocess::Preprocess() : Module(ModuleType::PREPROCESS)
     thread = Thread([this]() {
         Saiga::Random::setSeed(settings.randomSeed);
         Saiga::setThreadName("Preprocess");
-        while (true)
-        {
+        while (true) {
+            //! 获取下一个帧的数据
             auto frame = featureDetector->GetFrame();
 
-            if (!frame)
-            {
+            if (!frame) {
                 break;
             }
+            // 处理帧
             Process(*frame);
+            // 向输出缓冲区中添加一个空指针，以表示处理结束
             output_buffer.set(frame);
         }
+        // 向输出缓冲区中添加一个空指针，以表示处理结束
         output_buffer.set(nullptr);
     });
+    // 创建一个表格，列名分别为 "Frame", "Stereo P.", "Time (ms)"
     CreateTable({7, 12, 10}, {"Frame", "Stereo P.", "Time (ms)"});
 }
 
@@ -38,39 +41,53 @@ void Preprocess::Process(Frame& frame)
     {
         auto timer = ModuleTimer();
         frame.allocateTmp();
+        // 关键点去畸变
         undistortKeypoints(frame);
+        // 计算特征点网格，并重新排列特征点顺序
         computeFeatureGrid(frame);
-        if (settings.inputType == InputType::RGBD)
-        {
+
+        if (settings.inputType == InputType::RGBD) {
             stereo_matches = ComputeStereoFromRGBD(frame);
         }
-        else if (settings.inputType == InputType::Stereo)
-        {
+        // 双目立体匹配
+        else if (settings.inputType == InputType::Stereo) {
             stereo_matches = StereoMatching(frame);
         }
     }
     (*output_table) << frame.id << stereo_matches << LastTime();
 }
 
+/**
+ * 计算当前帧关键帧点的 去畸变后 的归一化平面x,y坐标 和 像素坐标
+ * @param frame
+ */
 void Preprocess::undistortKeypoints(Frame& frame)
 {
+    // 确保畸变校正特征点数组为空
     SAIGA_ASSERT(frame.undistorted_keypoints.size() == 0);
-    for (int i = 0; i < frame.N; i++)
-    {
+
+    // 遍历每个关键点
+    for (int i = 0; i < frame.N; i++) {
+        // 将关键点添加到 去畸变关键点数组中
         frame.undistorted_keypoints.emplace_back(frame.keypoints[i]);
 
+        // 该关键点坐标
         Vec2 p = frame.keypoints[i].point;
+        SAIGA_ASSERT(frame.image.inImage(p.y(), p.x()));    // 检查是否在图像范围内
 
-        SAIGA_ASSERT(frame.image.inImage(p.y(), p.x()));
-
+        // 对该关键点进行去畸变
+        // 有畸变的像素坐标 根据有畸变的内参 转为 有畸变的归一化平面x，y坐标
         p = rect_left.K_src.unproject2(p);
         //                Vec2 p_normalized = undistortNormalizedPoint(p, rect_left.D_src);
+        // 去畸变：使用高斯牛顿方法来优化去畸变的效果
         Vec2 p_normalized = undistortPointGN(p, p, rect_left.D_src);
 
+        // 通过左目的旋转矩阵 变换到 相机坐标x,y,1
         Vec3 p_r = rect_left.R * Vec3(p_normalized(0), p_normalized(1), 1);
-
+        // 重新计算到归一化平面x,y坐标
         p                                    = Vec2(p_r(0) / p_r(2), p_r(1) / p_r(2));
         frame.normalized_points[i]           = p;
+        // 通过左目的内参矩阵 转换到 像素坐标系下
         p                                    = rect_left.K_dst.normalizedToImage(p);
         frame.undistorted_keypoints[i].point = p;
     }
@@ -119,6 +136,11 @@ int Preprocess::ComputeStereoFromRGBD(Frame& frame)
     return num_matches;
 }
 
+/**
+ *
+ * @param frame
+ * @return
+ */
 int Preprocess::StereoMatching(Frame& frame)
 {
     SAIGA_ASSERT(settings.inputType == InputType::Stereo);
@@ -241,8 +263,13 @@ int Preprocess::StereoMatching(Frame& frame)
     return num_matches;
 }
 
+/**
+ * 计算特征点的网格索引
+ * @param frame
+ */
 void Preprocess::computeFeatureGrid(Frame& frame)
 {
+    // 计算特征点的网格索引
     auto permutation = frame.grid.create(featureGridBounds, frame.undistorted_keypoints);
 
     int N = permutation.size();
@@ -251,8 +278,10 @@ void Preprocess::computeFeatureGrid(Frame& frame)
     std::vector<KeyPoint> mvKeysUn2(N);
     AlignedVector<Vec2> norm2(N);
 
+    // 遍历当前帧每个特征点
     for (int i = 0; i < N; ++i)
     {
+        // 跟据索引值 permutation[i]，将原始特征点、描述子、去畸变特征点和归一化坐标点按照新的顺序存储到相应容器中
         mvKeys2[permutation[i]]      = frame.keypoints[i];
         descriptors2[permutation[i]] = frame.descriptors[i];
         mvKeysUn2[permutation[i]]    = frame.undistorted_keypoints[i];

@@ -16,6 +16,9 @@
 
 namespace Snake
 {
+/**
+ * 极线矫正
+ */
 void Rectify()
 {
     std::cout << "Computing rectification" << std::endl;
@@ -31,7 +34,6 @@ void Rectify()
     cv::Size size;
     size.width  = stereo_intrinsics.imageSize.width;
     size.height = stereo_intrinsics.imageSize.height;
-
 
     cv::Mat R, T;
 

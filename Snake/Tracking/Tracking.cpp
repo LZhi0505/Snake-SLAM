@@ -42,30 +42,27 @@ void Tracking::run()
         Saiga::Random::setSeed(settings.randomSeed);
         Saiga::setThreadName("Tracking");
 
-        while (true)
-        {
+        while (true) {
+
             auto frame = preprocess->GetFrame();
-            if (!frame)
-            {
+
+            if (!frame) {
                 break;
             }
 
 
-            while (is_dataset && pause)
-            {
+            while (is_dataset && pause) {
                 localMapping->UpdateViewer();
                 std::this_thread::sleep_for(std::chrono::milliseconds(30));
             }
 
-            while (tracking_barrier)
-            {
+            while (tracking_barrier) {
                 at_barrier = true;
                 std::this_thread::sleep_for(std::chrono::microseconds(100));
             }
             at_barrier = false;
 
-            if (trackFrame++ == 0)
-            {
+            if (trackFrame++ == 0) {
                 trackTimer.start();
             }
 
@@ -76,16 +73,14 @@ void Tracking::run()
 
 
 
-            if (!pause)
-            {
+            if (!pause) {
                 Keyframe* new_kf;
                 {
                     auto timer = ModuleTimer();
-                    new_kf     = track(frame);
+                    new_kf     = track(frame);  // 跟踪一帧
                 }
 
-                if (new_kf)
-                {
+                if (new_kf) {
                     localMapping->Process(new_kf);
                     reference_keyframe = new_kf;
                 }
@@ -93,38 +88,34 @@ void Tracking::run()
 
 
             auto free_image_data = [frame]() {
-                if (!settings.keep_all_frame_data)
-                {
+                if (!settings.keep_all_frame_data) {
                     frame->image.free();
                     frame->image_rgb.free();
                     frame->right_image.free();
                     frame->right_image_rgb.free();
 
-                    if (!settings.keep_valid_depth_image || !frame->validPose)
-                    {
+                    if (!settings.keep_valid_depth_image || !frame->validPose) {
                         frame->depth_image.free();
                     }
                 }
             };
 
-            if (viewer)
-            {
+            if (viewer) {
                 static std::future<void> result;
                 result = std::future<void>();
+
                 result = globalThreadPool->enqueue([frame, free_image_data]() {
                     viewer->setFrame(std::make_unique<ViewerFrame>(frame));
                     free_image_data();
                 });
             }
-            else
-            {
+            else {
                 free_image_data();
             }
 
 
 
-            if (map_clear)
-            {
+            if (map_clear) {
                 map.Clear();
                 state              = State::NOT_INITIALIZED;
                 last_keyframe      = nullptr;
@@ -146,12 +137,11 @@ Keyframe* Tracking::track(FramePtr frame)
 
     Keyframe* new_kf = nullptr;
 
-    if (state == State::NOT_INITIALIZED)
-    {
+    // 初始化
+    if (state == State::NOT_INITIALIZED) {
         auto res = initializer->Initialize(frame);
 
-        if (res.success)
-        {
+        if (res.success) {
             last_keyframe      = res.kfLast;
             reference_keyframe = res.kfLast;
             predictor.SetLastKeyframe(last_keyframe);
@@ -161,15 +151,17 @@ Keyframe* Tracking::track(FramePtr frame)
             res.kfFirst->frame->previousFrame = nullptr;
         }
     }
-    else if (state == State::OK || state == State::RECOVERING)
-    {
+    // 正常跟踪
+    else if (state == State::OK || state == State::RECOVERING) {
+        // 粗跟踪
         frameState = TrackCoarse(frame);
 
         auto inliers_coarse = frame->trackingInliers;
-        if (frameState)
-        {
+        // 粗跟踪成功
+        if (frameState) {
             // used for keyframe decision so we don't insert keyframes shortly after broken tracking
             SAIGA_ASSERT(frame->referenceKF());
+            // 精跟踪
             auto fine_result = TrackFine(frame);
             frameState       = std::get<0>(fine_result);
             new_kf           = std::get<1>(fine_result);
@@ -179,40 +171,34 @@ Keyframe* Tracking::track(FramePtr frame)
         (*output_table) << frame->id << inliers_coarse << inliers_fine << (new_kf ? new_kf->id() : 0);
 
 
-
-        if (frameState)
-        {
-            if (state == State::RECOVERING)
-            {
+        // 两步跟踪都成功
+        if (frameState) {
+            if (state == State::RECOVERING) {
                 //                std::cout << "Recovery Success at frame " << frame->id << std::endl;
-                std::cout << ">> " << *frame << ": Tracking Recovered. Inliers: " << frame->trackingInliers
-                          << std::endl;
+                std::cout << ">> " << *frame << ": Tracking Recovered. Inliers: " << frame->trackingInliers << std::endl;
             }
             state = State::OK;
             validInARow++;
         }
-        else
-        {
+        // 两步跟踪失败
+        else {
             validInARow = 0;
         }
 
-
-        if (!frameState)
-        {
+        // 当前帧跟踪失败
+        if (!frameState) {
             // the state is still ok so this is the first lost frame
-            if (state == State::OK)
-            {
+            // 系统仍显示跟踪正常，说明当前帧 是 丢失的第一帧
+            if (state == State::OK) {
                 std::cout << ">> " << *frame << ": Tracking Lost." << std::endl;
                 int num_kfs = map.KeyFramesInMap();
-                if (num_kfs < 20)
-                {
+                if (num_kfs < 20) {
                     std::cout << ">> " << *frame << ": Clear Map, Num Keyframes: " << num_kfs << std::endl;
                     // Tracking lost right after initialization.
                     // -> clear complete map and initialize again
                     map_clear = true;
                 }
-                else
-                {
+                else {
                     // set recovering for a few frames
                     state          = State::RECOVERING;
                     recoverCounter = MAX_RECOVER_FRAMES;
@@ -230,12 +216,11 @@ Keyframe* Tracking::track(FramePtr frame)
                     // TEST_MAP_SYNC;
                 }
             }
-            else
-            {
+            // 连续3帧跟踪失败，则重新初始化
+            else {
                 // we are already in recovering and still didn't found a valid pose
                 recoverCounter--;
-                if (recoverCounter == 0)
-                {
+                if (recoverCounter == 0) {
                     std::cout << ">> " << *frame << ": Starting Relocalization." << std::endl;
                     state = State::RELOCALIZE_AND_INITIALIZE;
                     createInitializer();
@@ -243,16 +228,15 @@ Keyframe* Tracking::track(FramePtr frame)
             }
         }
     }
-    else if (state == State::RELOCALIZE_AND_INITIALIZE)
-    {
+    // 重定位
+    else if (state == State::RELOCALIZE_AND_INITIALIZE) {
         frameState = try_localize(frame);
         // let's go first into recover mode to stabilize the pose estimate
-        if (frameState)
-        {
+        // 重定位成功
+        if (frameState) {
             // reloc successfull
             auto fine_state = TrackFine(frame);
-            if (std::get<0>(fine_state))
-            {
+            if (std::get<0>(fine_state)) {
                 validInARow    = 1;
                 state          = State::RECOVERING;
                 recoverCounter = MAX_RECOVER_FRAMES;
@@ -263,11 +247,10 @@ Keyframe* Tracking::track(FramePtr frame)
             // TEST_MAP_SYNC;
         }
     }
-    else
-    {
+    // 跟踪失败
+    else {
         SAIGA_EXIT_ERROR("unknown state");
     }
-
 
     return new_kf;
 }
