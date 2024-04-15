@@ -18,38 +18,32 @@
 #include "Map/MapPoint.h"
 #include "Preprocess/Input.h"
 #include "Preprocess/Preprocess.h"
-namespace Snake
-{
-Tracking::Tracking() : Module(ModuleType::TRACKING), poseRefinement(trackingErrorFactorCoarse)
-{
+namespace Snake {
+Tracking::Tracking() : Module(ModuleType::TRACKING), poseRefinement(trackingErrorFactorCoarse) {
     perKeyframeData.resize(maxKeyframes);
     mnTrackReferenceForFrame.resize(maxKeyframes);
     createInitializer();
     CreateTable({7, 10, 10, 10}, {"Frame", "Inl. 1", "Inl. 2", "KF"});
 }
 
-Tracking::~Tracking()
-{
+Tracking::~Tracking() {
     auto t = trackTimer.getTimeMS() / 1000.0;
-    std::cout << ConsoleColor::BLUE << "SLAM finished. It took " << t << "s for " << trackFrame << " frames -> "
-              << 1000.0 * t / trackFrame << "ms/frame -> " << trackFrame / t << "fps." << std::endl
+    std::cout << ConsoleColor::BLUE << "SLAM finished. It took " << t << "s for " << trackFrame << " frames -> " << 1000.0 * t / trackFrame << "ms/frame -> " << trackFrame / t << "fps." << std::endl
               << ConsoleColor::RESET;
 }
 
-void Tracking::run()
-{
+void Tracking::run() {
     thread = Thread([this]() {
         Saiga::Random::setSeed(settings.randomSeed);
         Saiga::setThreadName("Tracking");
 
         while (true) {
-
+            // 从 output_buffer 中获取一帧
             auto frame = preprocess->GetFrame();
 
             if (!frame) {
                 break;
             }
-
 
             while (is_dataset && pause) {
                 localMapping->UpdateViewer();
@@ -68,16 +62,13 @@ void Tracking::run()
 
             predictor.Predict(frame);
 
-
             SAIGA_ASSERT(predictor.last_keyframe == last_keyframe);
 
-
-
             if (!pause) {
-                Keyframe* new_kf;
+                Keyframe *new_kf;
                 {
                     auto timer = ModuleTimer();
-                    new_kf     = track(frame);  // 跟踪一帧
+                    new_kf = track(frame); // 跟踪一帧
                 }
 
                 if (new_kf) {
@@ -85,7 +76,6 @@ void Tracking::run()
                     reference_keyframe = new_kf;
                 }
             }
-
 
             auto free_image_data = [frame]() {
                 if (!settings.keep_all_frame_data) {
@@ -108,19 +98,16 @@ void Tracking::run()
                     viewer->setFrame(std::make_unique<ViewerFrame>(frame));
                     free_image_data();
                 });
-            }
-            else {
+            } else {
                 free_image_data();
             }
 
-
-
             if (map_clear) {
                 map.Clear();
-                state              = State::NOT_INITIALIZED;
-                last_keyframe      = nullptr;
+                state = State::NOT_INITIALIZED;
+                last_keyframe = nullptr;
                 reference_keyframe = nullptr;
-                lastTrackedFrame   = nullptr;
+                lastTrackedFrame = nullptr;
                 createInitializer();
                 map_clear = false;
                 localMapping->UpdateViewer();
@@ -130,23 +117,21 @@ void Tracking::run()
     });
 }
 
-Keyframe* Tracking::track(FramePtr frame)
-{
+Keyframe *Tracking::track(FramePtr frame) {
     bool frameState = false;
 
-
-    Keyframe* new_kf = nullptr;
+    Keyframe *new_kf = nullptr;
 
     // 初始化
     if (state == State::NOT_INITIALIZED) {
         auto res = initializer->Initialize(frame);
 
         if (res.success) {
-            last_keyframe      = res.kfLast;
+            last_keyframe = res.kfLast;
             reference_keyframe = res.kfLast;
             predictor.SetLastKeyframe(last_keyframe);
             lastTrackedFrame = frame;
-            state            = State::OK;
+            state = State::OK;
 
             res.kfFirst->frame->previousFrame = nullptr;
         }
@@ -163,13 +148,12 @@ Keyframe* Tracking::track(FramePtr frame)
             SAIGA_ASSERT(frame->referenceKF());
             // 精跟踪
             auto fine_result = TrackFine(frame);
-            frameState       = std::get<0>(fine_result);
-            new_kf           = std::get<1>(fine_result);
+            frameState = std::get<0>(fine_result);
+            new_kf = std::get<1>(fine_result);
         }
         auto inliers_fine = frame->trackingInliers;
 
         (*output_table) << frame->id << inliers_coarse << inliers_fine << (new_kf ? new_kf->id() : 0);
-
 
         // 两步跟踪都成功
         if (frameState) {
@@ -197,19 +181,16 @@ Keyframe* Tracking::track(FramePtr frame)
                     // Tracking lost right after initialization.
                     // -> clear complete map and initialize again
                     map_clear = true;
-                }
-                else {
+                } else {
                     // set recovering for a few frames
-                    state          = State::RECOVERING;
+                    state = State::RECOVERING;
                     recoverCounter = MAX_RECOVER_FRAMES;
 
-
                     // mark last frew frames as bad by increase the culling probability
-                    Keyframe* kf = last_keyframe;
-                    while (kf && kf->frame->id > frame->id - 30)
-                    {
+                    Keyframe *kf = last_keyframe;
+                    while (kf && kf->frame->id > frame->id - 30) {
                         kf->cull_factor = 2;
-                        kf              = kf->previousKF;
+                        kf = kf->previousKF;
                     }
                     simplification->Add(last_keyframe);
 
@@ -237,8 +218,8 @@ Keyframe* Tracking::track(FramePtr frame)
             // reloc successfull
             auto fine_state = TrackFine(frame);
             if (std::get<0>(fine_state)) {
-                validInARow    = 1;
-                state          = State::RECOVERING;
+                validInARow = 1;
+                state = State::RECOVERING;
                 recoverCounter = MAX_RECOVER_FRAMES;
 
                 new_kf = std::get<1>(fine_state);
@@ -255,23 +236,20 @@ Keyframe* Tracking::track(FramePtr frame)
     return new_kf;
 }
 
-void Tracking::createInitializer()
-{
-    switch (settings.inputType)
-    {
-        case InputType::RGBD:
-            initializer = make_aligned_shared<RGBDInitializer>(settings.initialization_quality);
-            break;
-        case InputType::Mono:
-            initializer = make_aligned_shared<MonoInitializer>(settings.initialization_quality);
-            break;
-        case InputType::Stereo:
-            initializer = make_aligned_shared<RGBDInitializer>(settings.initialization_quality);
-            break;
-        default:
-            SAIGA_EXIT_ERROR("No Initializer found for given inputtype.");
+void Tracking::createInitializer() {
+    switch (settings.inputType) {
+    case InputType::RGBD:
+        initializer = make_aligned_shared<RGBDInitializer>(settings.initialization_quality);
+        break;
+    case InputType::Mono:
+        initializer = make_aligned_shared<MonoInitializer>(settings.initialization_quality);
+        break;
+    case InputType::Stereo:
+        initializer = make_aligned_shared<RGBDInitializer>(settings.initialization_quality);
+        break;
+    default:
+        SAIGA_EXIT_ERROR("No Initializer found for given inputtype.");
     }
 }
 
-
-}  // namespace Snake
+} // namespace Snake
